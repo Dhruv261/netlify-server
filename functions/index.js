@@ -1,8 +1,16 @@
+require('dotenv').config();
 const express = require('express');
-const serverless = require('serverless-http');
 const app = express();
-
+// const cors = require('cors');
+// app.use(cors());
+const serverless = require('serverless-http');
+require('../database/mongoose');
+app.use(express.json());
+const userRouter = require('../routes/user');
+const playlistRouter = require('../routes/PassWork');
 const router = express.Router();
+
+
 
 router.get('/', (req, res) => {
   res.json({
@@ -17,5 +25,7 @@ router.get('/json', (req, res) => {
 });
 
 app.use('/', router);
+app.use('/', userRouter);
+app.use('/', playlistRouter);
 
 module.exports.handler = serverless(app);
