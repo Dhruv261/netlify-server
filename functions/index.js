@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const app = express();
-// const cors = require('cors');
-// app.use(cors());
+const cors = require('cors');
+app.use(cors());
 const serverless = require('serverless-http');
 require('../database/mongoose');
 app.use(express.json());
