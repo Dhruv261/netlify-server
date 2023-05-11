@@ -145,27 +145,28 @@ const des = (msg, key, subkeys) => {
   return chunkString(enc, 4).map(binToHex).join('').toUpperCase();
 };
 
-const encode = (msg, key) => des(msg, key, keySchedule(key));
-const decode = (msg, key) => des(msg, key, keySchedule(key).reverse());
 
-let key = bin('133457799BBCDFF1'); // hex
-let msg = bin('0123456789ABCDEF'); // hex
-let enc = encode(msg, key);
+// const encode = (msg, key) => des(msg, key, keySchedule(key));
+// const decode = (msg, key) => des(msg, key, keySchedule(key).reverse());
 
-console.log(enc); // => 85E813540F0AB405
-console.log(decode(bin(enc), key)); // => 0123456789ABCDEF
+// let key = bin('133457799BBCDFF1'); // hex
+// let msg = bin('0123456789ABCDEF'); // hex
+// let enc = encode(msg, key);
 
-// Triple DES (3DES) Example
-// Variant 2: Two keys (K1 = K3)
+// console.log(enc); // => 85E813540F0AB405
+// console.log(decode(bin(enc), key)); // => 0123456789ABCDEF
 
-let key2 = bin('0DAE3BF4ECCAD161');
+// // Triple DES (3DES) Example
+// // Variant 2: Two keys (K1 = K3)
 
-let tripleEnc = encode(msg, key);
-tripleEnc = decode(bin(tripleEnc), key2);
-tripleEnc = encode(bin(tripleEnc), key);
-console.log(tripleEnc); // => DDF3FFA6F0FC22DC
+// let key2 = bin('0DAE3BF4ECCAD161');
 
-let tripleDec = decode(bin(tripleEnc), key);
-tripleDec = encode(bin(tripleDec), key2);
-tripleDec = decode(bin(tripleDec), key);
-console.log(tripleDec); // => 0123456789ABCDEF
+// let tripleEnc = encode(msg, key);
+// tripleEnc = decode(bin(tripleEnc), key2);
+// tripleEnc = encode(bin(tripleEnc), key);
+// console.log(tripleEnc); // => DDF3FFA6F0FC22DC
+
+// let tripleDec = decode(bin(tripleEnc), key);
+// tripleDec = encode(bin(tripleDec), key2);
+// tripleDec = decode(bin(tripleDec), key);
+// console.log(tripleDec); // => 0123456789ABCDEF

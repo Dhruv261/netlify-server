@@ -1,62 +1,32 @@
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-/*  AES Counter-mode implementation in JavaScript       (c) Chris Veness 2005-2014 / MIT Licence  */
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
 
-/* jshint node:true */ /* global define, escape, unescape, btoa, atob */
 'use strict';
-if (typeof module != 'undefined' && module.exports) var Aes = require('./aes'); // CommonJS (Node.js)
+if (typeof module != 'undefined' && module.exports) var Aes = require('./aes');
 
-/**
- * Aes.Ctr: Counter-mode (CTR) wrapper for AES.
- *
- * This encrypts a Unicode string to produces a base64 ciphertext using 128/192/256-bit AES,
- * and the converse to decrypt an encrypted ciphertext.
- *
- * See http://csrc.nist.gov/publications/nistpubs/800-38a/sp800-38a.pdf
- *
- * @augments Aes
- */
+
 Aes.Ctr = {};
 
-/**
- * Encrypt a text using AES encryption in Counter mode of operation.
- *
- * Unicode multi-byte character safe
- *
- * @param   {string} plaintext - Source text to be encrypted.
- * @param   {string} password - The password to use to generate a key.
- * @param   {number} nBits - Number of bits to be used in the key; 128 / 192 / 256.
- * @returns {string} Encrypted text.
- *
- * @example
- *   var encr = Aes.Ctr.encrypt('big secret', 'pāşšŵōřđ', 256); // encr: 'lwGl66VVwVObKIr6of8HVqJr'
- */
+
 Aes.Ctr.encrypt = function (plaintext, password, nBits) {
-  var blockSize = 16; // block size fixed at 16 bytes / 128 bits (Nb=4) for AES
-  if (!(nBits == 128 || nBits == 192 || nBits == 256)) return ''; // standard allows 128/192/256 bit keys
+  var blockSize = 16;
+  if (!(nBits == 128 || nBits == 192 || nBits == 256)) return '';
   plaintext = String(plaintext).utf8Encode();
   password = String(password).utf8Encode();
 
-  // use AES itself to encrypt password to get cipher key (using plain password as source for key
-  // expansion) - gives us well encrypted key (though hashed key might be preferred for prod'n use)
-  var nBytes = nBits / 8; // no bytes in key (16/24/32)
+  var nBytes = nBits / 8;
   var pwBytes = new Array(nBytes);
   for (var i = 0; i < nBytes; i++) {
-    // use 1st 16/24/32 chars of password for key
+
     pwBytes[i] = isNaN(password.charCodeAt(i)) ? 0 : password.charCodeAt(i);
   }
-  var key = Aes.cipher(pwBytes, Aes.keyExpansion(pwBytes)); // gives us 16-byte key
-  key = key.concat(key.slice(0, nBytes - 16)); // expand key to 16/24/32 bytes long
+  var key = Aes.cipher(pwBytes, Aes.keyExpansion(pwBytes));
+  key = key.concat(key.slice(0, nBytes - 16));
 
-  // initialise 1st 8 bytes of counter block with nonce (NIST SP800-38A §B.2): [0-1] = millisec,
-  // [2-3] = random, [4-7] = seconds, together giving full sub-millisec uniqueness up to Feb 2106
   var counterBlock = new Array(blockSize);
 
-  var nonce = new Date().getTime(); // timestamp: milliseconds since 1-Jan-1970
+  var nonce = new Date().getTime();
   var nonceMs = nonce % 1000;
   var nonceSec = Math.floor(nonce / 1000);
   var nonceRnd = Math.floor(Math.random() * 0xffff);
-  // for debugging: nonce = nonceMs = nonceSec = nonceRnd = 0;
 
   for (var i = 0; i < 2; i++) counterBlock[i] = (nonceMs >>> (i * 8)) & 0xff;
   for (var i = 0; i < 2; i++)
@@ -64,148 +34,112 @@ Aes.Ctr.encrypt = function (plaintext, password, nBits) {
   for (var i = 0; i < 4; i++)
     counterBlock[i + 4] = (nonceSec >>> (i * 8)) & 0xff;
 
-  // and convert it to a string to go on the front of the ciphertext
   var ctrTxt = '';
   for (var i = 0; i < 8; i++) ctrTxt += String.fromCharCode(counterBlock[i]);
 
-  // generate key schedule - an expansion of the key into distinct Key Rounds for each round
   var keySchedule = Aes.keyExpansion(key);
 
   var blockCount = Math.ceil(plaintext.length / blockSize);
-  var ciphertxt = new Array(blockCount); // ciphertext as array of strings
+  var ciphertxt = new Array(blockCount);
 
   for (var b = 0; b < blockCount; b++) {
-    // set counter (block #) in last 8 bytes of counter block (leaving nonce in 1st 8 bytes)
-    // done in two stages for 32-bit ops: using two words allows us to go past 2^32 blocks (68GB)
     for (var c = 0; c < 4; c++) counterBlock[15 - c] = (b >>> (c * 8)) & 0xff;
     for (var c = 0; c < 4; c++)
       counterBlock[15 - c - 4] = (b / 0x100000000) >>> (c * 8);
 
-    var cipherCntr = Aes.cipher(counterBlock, keySchedule); // -- encrypt counter block --
+    var cipherCntr = Aes.cipher(counterBlock, keySchedule);
 
-    // block size is reduced on final block
     var blockLength =
       b < blockCount - 1 ? blockSize : ((plaintext.length - 1) % blockSize) + 1;
     var cipherChar = new Array(blockLength);
 
     for (var i = 0; i < blockLength; i++) {
-      // -- xor plaintext with ciphered counter char-by-char --
       cipherChar[i] = cipherCntr[i] ^ plaintext.charCodeAt(b * blockSize + i);
       cipherChar[i] = String.fromCharCode(cipherChar[i]);
     }
     ciphertxt[b] = cipherChar.join('');
   }
 
-  // use Array.join() for better performance than repeated string appends
   var ciphertext = ctrTxt + ciphertxt.join('');
   ciphertext = ciphertext.base64Encode();
 
   return ciphertext;
 };
 
-/**
- * Decrypt a text encrypted by AES in counter mode of operation
- *
- * @param   {string} ciphertext - Source text to be encrypted.
- * @param   {string} password - Password to use to generate a key.
- * @param   {number} nBits - Number of bits to be used in the key; 128 / 192 / 256.
- * @returns {string} Decrypted text
- *
- * @example
- *   var decr = Aes.Ctr.encrypt('lwGl66VVwVObKIr6of8HVqJr', 'pāşšŵōřđ', 256); // decr: 'big secret'
- */
+
 Aes.Ctr.decrypt = function (ciphertext, password, nBits) {
-  var blockSize = 16; // block size fixed at 16 bytes / 128 bits (Nb=4) for AES
-  if (!(nBits == 128 || nBits == 192 || nBits == 256)) return ''; // standard allows 128/192/256 bit keys
+  var blockSize = 16;
+  if (!(nBits == 128 || nBits == 192 || nBits == 256)) return '';
   ciphertext = String(ciphertext).base64Decode();
   password = String(password).utf8Encode();
 
-  // use AES to encrypt password (mirroring encrypt routine)
-  var nBytes = nBits / 8; // no bytes in key
+  var nBytes = nBits / 8;
   var pwBytes = new Array(nBytes);
   for (var i = 0; i < nBytes; i++) {
     pwBytes[i] = isNaN(password.charCodeAt(i)) ? 0 : password.charCodeAt(i);
   }
   var key = Aes.cipher(pwBytes, Aes.keyExpansion(pwBytes));
-  key = key.concat(key.slice(0, nBytes - 16)); // expand key to 16/24/32 bytes long
+  key = key.concat(key.slice(0, nBytes - 16));
 
-  // recover nonce from 1st 8 bytes of ciphertext
   var counterBlock = new Array(8);
   var ctrTxt = ciphertext.slice(0, 8);
   for (var i = 0; i < 8; i++) counterBlock[i] = ctrTxt.charCodeAt(i);
 
-  // generate key schedule
   var keySchedule = Aes.keyExpansion(key);
 
-  // separate ciphertext into blocks (skipping past initial 8 bytes)
   var nBlocks = Math.ceil((ciphertext.length - 8) / blockSize);
   var ct = new Array(nBlocks);
   for (var b = 0; b < nBlocks; b++)
     ct[b] = ciphertext.slice(8 + b * blockSize, 8 + b * blockSize + blockSize);
-  ciphertext = ct; // ciphertext is now array of block-length strings
+  ciphertext = ct;
 
-  // plaintext will get generated block-by-block into array of block-length strings
   var plaintxt = new Array(ciphertext.length);
 
   for (var b = 0; b < nBlocks; b++) {
-    // set counter (block #) in last 8 bytes of counter block (leaving nonce in 1st 8 bytes)
     for (var c = 0; c < 4; c++) counterBlock[15 - c] = (b >>> (c * 8)) & 0xff;
     for (var c = 0; c < 4; c++)
       counterBlock[15 - c - 4] =
         (((b + 1) / 0x100000000 - 1) >>> (c * 8)) & 0xff;
 
-    var cipherCntr = Aes.cipher(counterBlock, keySchedule); // encrypt counter block
+    var cipherCntr = Aes.cipher(counterBlock, keySchedule);
 
     var plaintxtByte = new Array(ciphertext[b].length);
     for (var i = 0; i < ciphertext[b].length; i++) {
-      // -- xor plaintxt with ciphered counter byte-by-byte --
       plaintxtByte[i] = cipherCntr[i] ^ ciphertext[b].charCodeAt(i);
       plaintxtByte[i] = String.fromCharCode(plaintxtByte[i]);
     }
     plaintxt[b] = plaintxtByte.join('');
   }
 
-  // join array of blocks into single plaintext string
   var plaintext = plaintxt.join('');
-  plaintext = plaintext.utf8Decode(); // decode from UTF8 back to Unicode multi-byte chars
+  plaintext = plaintext.utf8Decode();
 
   return plaintext;
 };
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-
-/** Extend String object with method to encode multi-byte string to utf8
- *  - monsur.hossa.in/2012/07/20/utf-8-in-javascript.html */
 if (typeof String.prototype.utf8Encode == 'undefined') {
   String.prototype.utf8Encode = function () {
     return unescape(encodeURIComponent(this));
   };
 }
-
-/** Extend String object with method to decode utf8 string to multi-byte */
 if (typeof String.prototype.utf8Decode == 'undefined') {
   String.prototype.utf8Decode = function () {
     try {
       return decodeURIComponent(escape(this));
     } catch (e) {
-      return this; // invalid UTF-8? return as-is
+      return this;
     }
   };
 }
 
-/** Extend String object with method to encode base64
- *  - developer.mozilla.org/en-US/docs/Web/API/window.btoa, nodejs.org/api/buffer.html
- *  note: if btoa()/atob() are not available (eg IE9-), try github.com/davidchambers/Base64.js */
 if (typeof String.prototype.base64Encode == 'undefined') {
   String.prototype.base64Encode = function () {
-    if (typeof btoa != 'undefined') return btoa(this); // browser
+    if (typeof btoa != 'undefined') return btoa(this);
     if (typeof Buffer != 'undefined')
-      return new Buffer(this, 'utf8').toString('base64'); // Node.js
+      return new Buffer(this, 'utf8').toString('base64');
     throw new Error('No Base64 Encode');
   };
 }
-
-/** Extend String object with method to decode base64 */
 if (typeof String.prototype.base64Decode == 'undefined') {
   String.prototype.base64Decode = function () {
     if (typeof atob != 'undefined') return atob(this); // browser
@@ -215,29 +149,21 @@ if (typeof String.prototype.base64Decode == 'undefined') {
   };
 }
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-if (typeof module != 'undefined' && module.exports) module.exports = Aes.Ctr; // CommonJs export
+if (typeof module != 'undefined' && module.exports) module.exports = Aes.Ctr;
 if (typeof define == 'function' && define.amd)
   define(['Aes'], function () {
     return Aes.Ctr;
-  }); // AMD
-/* http://www.movable-type.co.uk/scripts/aes.html */
-
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-/*  /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-/*  Encrypt/decrypt files                                                                         */
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
+  });
 
 function encryptFile(file) {
-    // use FileReader.readAsArrayBuffer to handle binary files
+
     var reader = new FileReader();
     reader.readAsArrayBuffer(file);
     reader.onload = function(evt) {
         $('body').css({'cursor':'wait'});
 
-        // Aes.Ctr.encrypt expects a string, but converting binary file directly to string could
-        // give invalid Unicode sequences, so convert bytestream ArrayBuffer to single-byte chars
-        var contentBytes = new Uint8Array(reader.result); // ≡ evt.target.result
+
+        var contentBytes = new Uint8Array(reader.result);
         var contentStr = '';
         for (var i=0; i<contentBytes.length; i++) {
             contentStr += String.fromCharCode(contentBytes[i]);
@@ -260,64 +186,45 @@ function encryptFile(file) {
 }
 
 function decryptFile(file) {
-    // use FileReader.ReadAsText to read (base64-encoded) ciphertext file
+
     var reader = new FileReader();
     reader.readAsText(file);
     reader.onload = function(evt) {
         $('body').css({'cursor':'wait'});
 
-        var content = reader.result; // ≡ evt.target.result
+        var content = reader.result;
         var password = $('#password-file').val();
 
         var t1 = new Date();
         var plaintext = Aes.Ctr.decrypt(content, password, 256);
         var t2 = new Date();
 
-        // convert single-byte character stream to ArrayBuffer bytestream
+
         var contentBytes = new Uint8Array(plaintext.length);
         for (var i=0; i<plaintext.length; i++) {
             contentBytes[i] = plaintext.charCodeAt(i);
         }
 
-        // use Blob to save decrypted file
+
         var blob = new Blob([contentBytes], { type: 'application/octet-stream' });
         var filename = file.name.replace(/\.encrypted$/,'')+'.decrypted';
         saveAs(blob, filename);
 
-        $('#decrypt-file-time').html(((t2 - t1)/1000)+'s'); // display time taken
+        $('#decrypt-file-time').html(((t2 - t1)/1000)+'s');
         $('body').css({'cursor':'default'});
     }
 }
-//(c) Chris Veness 2005-2014 / MIT Licence */
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
 
-/* jshint node:true *//* global define */
 'use strict';
 
-
-/**
- * AES (Rijndael cipher) encryption routines,
- *
- * Reference implementation of FIPS-197 http://csrc.nist.gov/publications/fips/fips197/fips-197.pdf.
- *
- * @namespace
- */
 var Aes = {};
 
 
-/**
- * AES Cipher function: encrypt 'input' state with Rijndael algorithm [§5.1];
- *   applies Nr rounds (10/12/14) using key schedule w for 'add round key' stage.
- *
- * @param   {number[]}   input - 16-byte (128-bit) input state array.
- * @param   {number[][]} w - Key schedule as 2D byte-array (Nr+1 x Nb bytes).
- * @returns {number[]}   Encrypted output state array.
- */
 Aes.cipher = function(input, w) {
-    var Nb = 4;               // block size (in words): no of columns in state (fixed at 4 for AES)
-    var Nr = w.length/Nb - 1; // no of rounds: 10/12/14 for 128/192/256-bit keys
+    var Nb = 4;
+    var Nr = w.length/Nb - 1;
 
-    var state = [[],[],[],[]];  // initialise 4xNb byte-array 'state' with input [§3.4]
+    var state = [[],[],[],[]];
     for (var i=0; i<4*Nb; i++) state[i%4][Math.floor(i/4)] = input[i];
 
     state = Aes.addRoundKey(state, w, 0, Nb);
@@ -333,47 +240,41 @@ Aes.cipher = function(input, w) {
     state = Aes.shiftRows(state, Nb);
     state = Aes.addRoundKey(state, w, Nr, Nb);
 
-    var output = new Array(4*Nb);  // convert state to 1-d array before returning [§3.4]
+    var output = new Array(4*Nb);
     for (var i=0; i<4*Nb; i++) output[i] = state[i%4][Math.floor(i/4)];
 
     return output;
 };
 
 
-/**
- * Perform key expansion to generate a key schedule from a cipher key [§5.2].
- *
- * @param   {number[]}   key - Cipher key as 16/24/32-byte array.
- * @returns {number[][]} Expanded key schedule as 2D byte-array (Nr+1 x Nb bytes).
- */
 Aes.keyExpansion = function(key) {
-    var Nb = 4;            // block size (in words): no of columns in state (fixed at 4 for AES)
-    var Nk = key.length/4; // key length (in words): 4/6/8 for 128/192/256-bit keys
-    var Nr = Nk + 6;       // no of rounds: 10/12/14 for 128/192/256-bit keys
+    var Nb = 4;
+    var Nk = key.length/4;
+    var Nr = Nk + 6;
 
     var w = new Array(Nb*(Nr+1));
     var temp = new Array(4);
 
-    // initialise first Nk words of expanded key with cipher key
+
     for (var i=0; i<Nk; i++) {
         var r = [key[4*i], key[4*i+1], key[4*i+2], key[4*i+3]];
         w[i] = r;
     }
 
-    // expand the key into the remainder of the schedule
+
     for (var i=Nk; i<(Nb*(Nr+1)); i++) {
         w[i] = new Array(4);
         for (var t=0; t<4; t++) temp[t] = w[i-1][t];
-        // each Nk'th word has extra transformation
+
         if (i % Nk == 0) {
             temp = Aes.subWord(Aes.rotWord(temp));
             for (var t=0; t<4; t++) temp[t] ^= Aes.rCon[i/Nk][t];
         }
-        // 256-bit key has subWord applied every 4th word
+
         else if (Nk > 6 && i%Nk == 4) {
             temp = Aes.subWord(temp);
         }
-        // xor w[i] with w[i-1] and w[i-Nk]
+
         for (var t=0; t<4; t++) w[i][t] = w[i-Nk][t] ^ temp[t];
     }
 
@@ -381,10 +282,6 @@ Aes.keyExpansion = function(key) {
 };
 
 
-/**
- * Apply SBox to state S [§5.1.1]
- * @private
- */
 Aes.subBytes = function(s, Nb) {
     for (var r=0; r<4; r++) {
         for (var c=0; c<Nb; c++) s[r][c] = Aes.sBox[s[r][c]];
@@ -393,37 +290,29 @@ Aes.subBytes = function(s, Nb) {
 };
 
 
-/**
- * Shift row r of state S left by r bytes [§5.1.2]
- * @private
- */
 Aes.shiftRows = function(s, Nb) {
     var t = new Array(4);
     for (var r=1; r<4; r++) {
-        for (var c=0; c<4; c++) t[c] = s[r][(c+r)%Nb];  // shift into temp copy
-        for (var c=0; c<4; c++) s[r][c] = t[c];         // and copy back
-    }          // note that this will work for Nb=4,5,6, but not 7,8 (always 4 for AES):
-    return s;  // see asmaes.sourceforge.net/rijndael/rijndaelImplementation.pdf
+        for (var c=0; c<4; c++) t[c] = s[r][(c+r)%Nb];
+        for (var c=0; c<4; c++) s[r][c] = t[c];
+    }
+    return s;
 };
 
 
-/**
- * Combine bytes of each col of state S [§5.1.3]
- * @private
- */
 Aes.mixColumns = function(s, Nb) {
     for (var c=0; c<4; c++) {
-        var a = new Array(4);  // 'a' is a copy of the current column from 's'
-        var b = new Array(4);  // 'b' is a•{02} in GF(2^8)
+        var a = new Array(4);
+        var b = new Array(4);
         for (var i=0; i<4; i++) {
             a[i] = s[i][c];
             b[i] = s[i][c]&0x80 ? s[i][c]<<1 ^ 0x011b : s[i][c]<<1;
         }
-        // a[n] ^ b[n] is a•{03} in GF(2^8)
-        s[0][c] = b[0] ^ a[1] ^ b[1] ^ a[2] ^ a[3]; // {02}•a0 + {03}•a1 + a2 + a3
-        s[1][c] = a[0] ^ b[1] ^ a[2] ^ b[2] ^ a[3]; // a0 • {02}•a1 + {03}•a2 + a3
-        s[2][c] = a[0] ^ a[1] ^ b[2] ^ a[3] ^ b[3]; // a0 + a1 + {02}•a2 + {03}•a3
-        s[3][c] = a[0] ^ b[0] ^ a[1] ^ a[2] ^ b[3]; // {03}•a0 + a1 + a2 + {02}•a3
+
+        s[0][c] = b[0] ^ a[1] ^ b[1] ^ a[2] ^ a[3];
+        s[1][c] = a[0] ^ b[1] ^ a[2] ^ b[2] ^ a[3];
+        s[2][c] = a[0] ^ a[1] ^ b[2] ^ a[3] ^ b[3];
+        s[3][c] = a[0] ^ b[0] ^ a[1] ^ a[2] ^ b[3];
     }
     return s;
 };
@@ -496,23 +385,17 @@ Aes.mixColumns = function(s, Nb) {
 //              [0x36, 0x00, 0x00, 0x00] ];
 
 
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-if (typeof module != 'undefined' && module.exports) module.exports = Aes; // CommonJs export
-if (typeof define == 'function' && define.amd) define([], function() { return Aes; }); // AMD
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
-/*  Encrypt/decrypt files                                                                         */
-/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  */
+if (typeof module != 'undefined' && module.exports) module.exports = Aes;
+if (typeof define == 'function' && define.amd) define([], function() { return Aes; });
+
 
 function encryptFile(file) {
-    // use FileReader.readAsArrayBuffer to handle binary files
     var reader = new FileReader();
     reader.readAsArrayBuffer(file);
     reader.onload = function(evt) {
         $('body').css({'cursor':'wait'});
 
-        // Aes.Ctr.encrypt expects a string, but converting binary file directly to string could
-        // give invalid Unicode sequences, so convert bytestream ArrayBuffer to single-byte chars
-        var contentBytes = new Uint8Array(reader.result); // ≡ evt.target.result
+        var contentBytes = new Uint8Array(reader.result);
         var contentStr = '';
         for (var i=0; i<contentBytes.length; i++) {
             contentStr += String.fromCharCode(contentBytes[i]);
@@ -524,7 +407,6 @@ function encryptFile(file) {
         var ciphertext = Aes.Ctr.encrypt(contentStr, password, 256);
         var t2 = new Date();
 
-        // use Blob to save encrypted file
         var blob = new Blob([ciphertext], { type: 'text/plain' });
         var filename = file.name+'.encrypted';
         saveAs(blob, filename);
@@ -535,31 +417,28 @@ function encryptFile(file) {
 }
 
 function decryptFile(file) {
-    // use FileReader.ReadAsText to read (base64-encoded) ciphertext file
     var reader = new FileReader();
     reader.readAsText(file);
     reader.onload = function(evt) {
         $('body').css({'cursor':'wait'});
 
-        var content = reader.result; // ≡ evt.target.result
+        var content = reader.result;
         var password = $('#password-file').val();
 
         var t1 = new Date();
         var plaintext = Aes.Ctr.decrypt(content, password, 256);
         var t2 = new Date();
 
-        // convert single-byte character stream to ArrayBuffer bytestream
         var contentBytes = new Uint8Array(plaintext.length);
         for (var i=0; i<plaintext.length; i++) {
             contentBytes[i] = plaintext.charCodeAt(i);
         }
 
-        // use Blob to save decrypted file
         var blob = new Blob([contentBytes], { type: 'application/octet-stream' });
         var filename = file.name.replace(/\.encrypted$/,'')+'.decrypted';
         saveAs(blob, filename);
 
-        $('#decrypt-file-time').html(((t2 - t1)/1000)+'s'); // display time taken
+        $('#decrypt-file-time').html(((t2 - t1)/1000)+'s');
         $('body').css({'cursor':'default'});
     }
 }
